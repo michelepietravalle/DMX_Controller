@@ -149,6 +149,7 @@ const char *GROUPS[] = { "Gruppo 1", "Gruppo 2" };
 const size_t N_GROUPS = sizeof(GROUPS) / sizeof(GROUPS[0]);
 const size_t MAX_GROUPS = 8;
 const size_t MAX_SCENES = 12;  // quante scene si possono memorizzare
+const size_t MAX_CHASE = 32;   // lunghezza massima della sequenza chase
 
 // Gruppo di default di ogni faro (1..N_GROUPS), nello stesso ordine di FIXTURES[].
 const uint8_t FIXTURE_GROUP[N_FIXTURES] = { 1, 1, 1, 2, 2 };
@@ -189,6 +190,10 @@ button:active{background:#3a3a42}
 .scadd{padding:9px 13px}
 .scfade{display:flex;align-items:center;gap:10px;font-size:14px;color:#9a9aa3;max-width:380px}
 .scfade input{flex:1}
+.sclbl{font-size:14px;color:#9a9aa3;align-self:center;margin-right:2px}
+.chbtn.on{background:#0f6e56;border-color:#1d9e75;color:#eafff5}
+#chadd{width:auto;min-width:140px}
+.scn .scnr[disabled]{cursor:default;opacity:1}
 #app.view{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
 #app.view .fix{margin-bottom:0}
 #app.edit{max-width:560px;margin:0 auto}
@@ -220,7 +225,7 @@ select{width:100%;background:#26262c;border:1px solid #3a3a42;color:#ececf1;bord
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
 const touched={},lastSent={},timers={};
-let cfg=null,editing=false,fadeMs=2000,polling=null;
+let cfg=null,editing=false,fadeMs=2000,polling=null,chaseOn=false,stepMs=2000,taps=[];
 function ok(b){$("#st").className=b?"ok":"err"}
 function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function upd(id,v){const e=document.getElementById(id);if(e)e.textContent=v}
@@ -245,19 +250,33 @@ function bindBump(btn,base){
  btn.addEventListener("pointercancel",off);
  btn.addEventListener("lostpointercapture",off);
 }
+function sceneName(slot){const s=(cfg.scenes||[]).find(x=>x.i===slot);return s?s.name:("#"+slot)}
 function renderScenes(){
  const el=$("#scenes");
  if(editing||!cfg){el.innerHTML="";return}
  const list=cfg.scenes||[];
  const chips=list.map(s=>'<span class="scn"><button class="scnr" data-recall="'+s.i+'">'+esc(s.name)+
   '</button><button class="scnx" data-scdel="'+s.i+'" aria-label="elimina">&#10005;</button></span>').join("");
- el.innerHTML='<div class="scrow">'+chips+'<button class="scadd" id="scadd">+ Salva scena</button></div>'+
+ const seq=(cfg.chaselist||[]).map((slot,pos)=>'<span class="scn"><button class="scnr" disabled>'+esc(sceneName(slot))+
+  '</button><button class="scnx" data-chdel="'+pos+'" aria-label="togli">&#10005;</button></span>').join("");
+ const addsel=list.length?'<select id="chadd"><option value="">+ aggiungi</option>'+
+  list.map(s=>'<option value="'+s.i+'">'+esc(s.name)+'</option>').join("")+'</select>':'';
+ el.innerHTML=
+  '<div class="scrow">'+chips+'<button class="scadd" id="scadd">+ Salva scena</button></div>'+
   '<label class="scfade">Dissolvenza <span id="fadev">'+(fadeMs/1000).toFixed(1)+'</span> s'+
-  '<input type="range" id="fade" min="0" max="10000" step="100" value="'+fadeMs+'"></label>';
+  '<input type="range" id="fade" min="0" max="10000" step="100" value="'+fadeMs+'"></label>'+
+  '<div class="scrow" style="margin-top:12px"><span class="sclbl">Sequenza</span>'+seq+addsel+'</div>'+
+  '<div class="scrow"><button class="chbtn" id="chase">Avvia chase</button><button id="tap">Tap</button>'+
+  '<span class="sclbl">Tempo <span id="tempov">'+(stepMs/1000).toFixed(1)+'</span> s</span></div>';
  $("#scadd").addEventListener("click",saveScene);
  for(const b of el.querySelectorAll("[data-recall]"))b.addEventListener("click",()=>recallScene(+b.dataset.recall));
  for(const b of el.querySelectorAll("[data-scdel]"))b.addEventListener("click",()=>{if(confirm("Eliminare la scena?"))op("/scenedel?i="+b.dataset.scdel)});
+ for(const b of el.querySelectorAll("[data-chdel]"))b.addEventListener("click",()=>op("/chasedel?pos="+b.dataset.chdel));
+ const cs=$("#chadd");if(cs)cs.addEventListener("change",()=>{if(cs.value!=="")op("/chaseadd?i="+cs.value)});
  const f=$("#fade");f.addEventListener("input",()=>{fadeMs=+f.value;$("#fadev").textContent=(fadeMs/1000).toFixed(1)});
+ $("#chase").addEventListener("click",()=>setChase(!chaseOn));
+ $("#tap").addEventListener("click",tap);
+ updateChaseUI();
 }
 async function recallScene(i){
  try{await fetch("/recall?i="+i+"&ms="+fadeMs);ok(true);poll()}catch(e){ok(false)}
@@ -267,6 +286,25 @@ async function saveScene(){
  if(name===null)return;
  await op("/scenesave?name="+encodeURIComponent(name));
 }
+function chaseFade(){return Math.min(fadeMs,stepMs)}
+async function setChase(on){
+ if(on&&!(cfg.chaselist&&cfg.chaselist.length)){alert("Aggiungi prima delle scene alla sequenza");return}
+ chaseOn=on;updateChaseUI();
+ try{await fetch("/chase?on="+(on?1:0)+"&step="+stepMs+"&fade="+chaseFade());ok(true);if(on)poll()}catch(e){ok(false)}
+}
+function tap(){
+ const now=Date.now();
+ if(taps.length&&now-taps[taps.length-1]>3000)taps=[];
+ taps.push(now);if(taps.length>4)taps.shift();
+ if(taps.length>=2){
+  let sum=0;for(let i=1;i<taps.length;i++)sum+=taps[i]-taps[i-1];
+  stepMs=Math.max(100,Math.min(60000,Math.round(sum/(taps.length-1))));
+  updateTempo();
+  if(chaseOn)fetch("/chase?on=1&step="+stepMs+"&fade="+chaseFade()).catch(()=>{});
+ }
+}
+function updateTempo(){const e=$("#tempov");if(e)e.textContent=(stepMs/1000).toFixed(1)}
+function updateChaseUI(){const b=$("#chase");if(b){b.textContent=chaseOn?"Ferma chase":"Avvia chase";b.classList.toggle("on",chaseOn)}}
 function palHtml(gid){
  if(!cfg.palette||!cfg.palette.length)return "";
  return '<div class="pal">'+cfg.palette.map((sw,pi)=>
@@ -366,7 +404,11 @@ async function poll(){
  clearTimeout(polling);
  let next=3000;
  if(!editing){
-  try{const st=await(await fetch("/state")).json();ok(true);applyState(st,true);if(st.fading)next=200}catch(e){ok(false)}
+  try{
+   const st=await(await fetch("/state")).json();ok(true);applyState(st,true);
+   if(typeof st.chase==="boolean"&&st.chase!==chaseOn){chaseOn=st.chase;updateChaseUI()}
+   if(st.fading||st.chase)next=200;
+  }catch(e){ok(false)}
  }
  polling=setTimeout(poll,next);
 }
@@ -401,6 +443,13 @@ bool fading = false;
 uint32_t fadeStart = 0, fadeDur = 0;
 uint8_t fadeFrom[MAX_GROUPS + 1][N_CHANNELS];
 uint8_t fadeTo[MAX_GROUPS + 1][N_CHANNELS];
+
+// chase: sequenza di scene (slot) scelte dall'utente, scorse in loop a tempo
+uint8_t chaseList[MAX_CHASE];
+size_t chaseLen = 0;
+bool chaseActive = false;
+uint32_t chaseStepMs = 2000, chaseFadeMs = 1000, chaseNext = 0;
+int chasePos = -1;  // posizione corrente nella sequenza
 Preferences prefs;
 WebServer server(80);
 DNSServer dnsServer;
@@ -533,13 +582,17 @@ void loadConfig() {
 void saveScenesNVS() {
   prefs.begin("faridmx", false);
   prefs.putBytes("scenes", scenes, sizeof(scenes));
+  prefs.putBytes("chase", chaseList, sizeof(chaseList));
+  prefs.putUChar("chaselen", (uint8_t)chaseLen);
   prefs.end();
 }
 
 void loadScenesNVS() {
   prefs.begin("faridmx", true);
-  size_t len = prefs.getBytesLength("scenes");
-  if (len == sizeof(scenes)) prefs.getBytes("scenes", scenes, sizeof(scenes));  // solo se il formato combacia
+  if (prefs.getBytesLength("scenes") == sizeof(scenes)) prefs.getBytes("scenes", scenes, sizeof(scenes));  // solo se il formato combacia
+  if (prefs.getBytesLength("chase") == sizeof(chaseList)) prefs.getBytes("chase", chaseList, sizeof(chaseList));
+  chaseLen = prefs.getUChar("chaselen", 0);
+  if (chaseLen > MAX_CHASE) chaseLen = 0;
   prefs.end();
 }
 
@@ -584,6 +637,22 @@ void fadeUpdate() {
   if (done) fading = false;
 }
 
+// avanza la chase: ogni chaseStepMs passa alla scena successiva della sequenza
+void chaseUpdate() {
+  if (!chaseActive || chaseLen == 0) return;
+  if ((int32_t)(millis() - chaseNext) < 0) return;
+  for (size_t tries = 0; tries < chaseLen; tries++) {
+    chasePos = (chasePos + 1) % (int)chaseLen;
+    uint8_t slot = chaseList[chasePos];
+    if (slot < MAX_SCENES && scenes[slot].used) {
+      recallScene(slot, chaseFadeMs <= chaseStepMs ? chaseFadeMs : chaseStepMs);
+      chaseNext = millis() + chaseStepMs;
+      return;
+    }
+  }
+  chaseActive = false;  // nessuna scena valida nella sequenza
+}
+
 // ------------------------------- DMX ------------------------------------
 void dmxBegin() {
   pinMode(DMX_TX_PIN, OUTPUT);
@@ -624,7 +693,8 @@ void dmxRender() {
 }
 
 void dmxSendFrame() {
-  fadeUpdate();  // se una scena sta sfumando, aggiorna i livelli prima di costruire il frame
+  chaseUpdate();  // eventuale avanzamento della sequenza (avvia una nuova dissolvenza)
+  fadeUpdate();   // se una scena sta sfumando, aggiorna i livelli prima di costruire il frame
   dmxRender();
   DMX.flush();                // attende che il frame precedente sia uscito tutto
   DMX.updateBaudRate(83333);  // BREAK: uno 0x00 a 83.3 kbaud = 108 us di linea bassa
@@ -736,6 +806,58 @@ void handleSceneDel() {
   }
   scenes[i].used = false;
   scenes[i].name[0] = '\0';
+  // togli la scena eliminata dalla sequenza chase
+  size_t w = 0;
+  for (size_t r = 0; r < chaseLen; r++)
+    if (chaseList[r] != (uint8_t)i) chaseList[w++] = chaseList[r];
+  chaseLen = w;
+  saveScenesNVS();
+  server.send(200, "text/plain", "ok");
+}
+
+// avvia/ferma la chase e ne imposta tempo del passo (step) e dissolvenza (fade)
+void handleChase() {
+  bool on = server.arg("on").toInt() != 0;
+  if (server.hasArg("step")) chaseStepMs = (uint32_t)constrain(server.arg("step").toInt(), 100, 60000);
+  if (server.hasArg("fade")) chaseFadeMs = (uint32_t)constrain(server.arg("fade").toInt(), 0, 60000);
+  chaseActive = on;
+  if (on) {
+    chasePos = -1;
+    chaseNext = millis();
+  }
+  server.send(200, "text/plain", "ok");
+}
+
+void handleChaseAdd() {
+  int i = server.arg("i").toInt();
+  if (i < 0 || i >= (int)MAX_SCENES || !scenes[i].used) {
+    server.send(400, "text/plain", "scena inesistente");
+    return;
+  }
+  if (chaseLen >= MAX_CHASE) {
+    server.send(400, "text/plain", "sequenza piena");
+    return;
+  }
+  chaseList[chaseLen++] = (uint8_t)i;
+  saveScenesNVS();
+  server.send(200, "text/plain", "ok");
+}
+
+void handleChaseDel() {
+  int pos = server.arg("pos").toInt();
+  if (pos < 0 || pos >= (int)chaseLen) {
+    server.send(400, "text/plain", "posizione non valida");
+    return;
+  }
+  for (size_t k = pos; k + 1 < chaseLen; k++) chaseList[k] = chaseList[k + 1];
+  chaseLen--;
+  saveScenesNVS();
+  server.send(200, "text/plain", "ok");
+}
+
+void handleChaseClear() {
+  chaseLen = 0;
+  chaseActive = false;
   saveScenesNVS();
   server.send(200, "text/plain", "ok");
 }
@@ -842,6 +964,8 @@ void handleState() {
   }
   j += "},\"fading\":";
   j += fading ? "true" : "false";
+  j += ",\"chase\":";
+  j += chaseActive ? "true" : "false";
   j += "}";
   server.send(200, "application/json", j);
 }
@@ -898,6 +1022,11 @@ void handleConfig() {
     j += ",\"name\":\"";
     j += scenes[i].name;
     j += "\"}";
+  }
+  j += "],\"chaselist\":[";
+  for (size_t i = 0; i < chaseLen; i++) {
+    if (i) j += ',';
+    j += String(chaseList[i]);
   }
   j += "]}";
   server.send(200, "application/json", j);
@@ -965,6 +1094,10 @@ void setup() {
   server.on("/recall", handleRecall);
   server.on("/scenesave", handleSceneSave);
   server.on("/scenedel", handleSceneDel);
+  server.on("/chase", handleChase);
+  server.on("/chaseadd", handleChaseAdd);
+  server.on("/chasedel", handleChaseDel);
+  server.on("/chaseclear", handleChaseClear);
   server.on("/gadd", handleGroupAdd);
   server.on("/gren", handleGroupRename);
   server.on("/gdel", handleGroupDelete);
