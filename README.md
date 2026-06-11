@@ -1,4 +1,4 @@
-# Fari FMX
+# Fari DMX
 
 Controller DMX512 per ESP32 con pagina web di controllo. Il modello e' a due
 livelli:
