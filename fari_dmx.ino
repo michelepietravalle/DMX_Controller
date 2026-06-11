@@ -79,10 +79,10 @@ const ChannelDef CHANNELS[] = {
 };
 const size_t N_CHANNELS = sizeof(CHANNELS) / sizeof(CHANNELS[0]);
 
-// Valori dei canali durante un "flash bianco" (stesso ordine di CHANNELS[]):
-// bianco pieno a piena intensita', tutto il resto a zero. Personalizzabile
-// (es. metti 255 anche su Ambra per un flash piu' caldo).
-const uint8_t FLASH[N_CHANNELS] = { 255, 0, 0, 0, 255, 0, 0, 0, 0 };
+// Valori dei canali durante flash e strobo (stesso ordine di CHANNELS[]):
+// tutti i LED a fondo (intensita', rosso, verde, blu, bianco) per il massimo
+// di luce. Personalizzabile (es. aggiungi 255 su Ambra, o togli un colore).
+const uint8_t FLASH[N_CHANNELS] = { 255, 255, 255, 255, 255, 0, 0, 0, 0 };
 // Mentre il pulsante e' premuto, il tablet rinfresca il flash ~ogni 250 ms;
 // al rilascio il bianco sparisce entro questo tempo anche se il messaggio di
 // rilascio si perde (rete di sicurezza contro il "flash incantato"). Vale
@@ -160,7 +160,7 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0f0f12">
-<title>Fari DMX</title>
+<title>Fari DMX by VoltagePyromania</title>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -174,6 +174,8 @@ button{background:#26262c;border:1px solid #3a3a42;color:#ececf1;border-radius:1
 button:active{background:#3a3a42}
 .flash{background:#ececf1;color:#16161a;border-color:#ececf1;font-weight:500;touch-action:none}
 .flash:active{background:#fff;border-color:#fff}
+.hstrobe{border-color:#5a5a64;touch-action:none}
+.hstrobe:active{background:#3a3a42}
 .brow{display:flex;gap:10px;margin-top:12px}
 .gflash,.gstrobe{flex:1;padding:13px;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
 .gflash{background:#ececf1;color:#16161a;border:1px solid #ececf1}
@@ -197,17 +199,21 @@ button:active{background:#3a3a42}
 #app.view{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
 #app.view .fix{margin-bottom:0}
 #app.edit{max-width:560px;margin:0 auto}
+@media(min-width:760px){#app.view{display:flex;gap:10px}#app.view .fix{flex:1 1 0;min-width:0;padding:12px 12px 14px}}
+.scnsave{display:inline-flex;gap:6px;align-items:center}
+.scnsave input{background:#26262c;border:1px solid #3a3a42;color:#ececf1;border-radius:8px;padding:8px 10px;font-size:14px;width:130px}
+.arm{background:#5a2020;color:#ffd0d0;border-color:#7a3a3a}
 .fix{background:#1a1a1f;border:1px solid #2a2a31;border-radius:14px;padding:14px 16px;margin-bottom:14px}
 .fix h2{font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9a9aa3;margin:0 0 2px}
 .cap{color:#8a8a93;font-size:13px;margin:0 0 8px}
 .pal{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 .sw{width:30px;height:30px;min-width:30px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.18);cursor:pointer}
 .sw:active{transform:scale(.9)}
-.row{display:grid;grid-template-columns:100px 1fr 40px;gap:12px;align-items:center;padding:6px 0}
-.master{border-bottom:1px solid #2a2a31;padding-bottom:10px;margin-bottom:6px}
+.row{display:grid;grid-template-columns:96px 1fr 34px;gap:10px;align-items:center;padding:0;height:var(--rh,44px)}
+.master{border-bottom:1px solid #2a2a31;margin-bottom:4px}
 .lbl{display:flex;align-items:center;gap:8px;font-size:14px;overflow:hidden;white-space:nowrap}
 .dot{width:12px;height:12px;border-radius:50%;flex:none}
-input[type=range]{width:100%;height:32px;margin:0}
+input[type=range]{width:100%;height:clamp(16px,calc(var(--rh,44px) - 12px),32px);margin:0}
 .val{text-align:right;font-variant-numeric:tabular-nums;font-size:14px;color:#9a9aa3}
 select{width:100%;background:#26262c;border:1px solid #3a3a42;color:#ececf1;border-radius:8px;padding:8px;font-size:14px}
 .ghead{display:flex;gap:8px;margin-bottom:8px}
@@ -217,7 +223,7 @@ select{width:100%;background:#26262c;border:1px solid #3a3a42;color:#ececf1;bord
 .hint{color:#9a9aa3;font-size:13px;margin:2px 0 4px}
 #msg{color:#9a9aa3;font-size:14px}
 </style></head><body>
-<header><h1>Fari DMX</h1><span id="st"></span><button id="fl" class="flash">Flash</button><button id="bo">Blackout</button><button id="ed">Modifica</button></header>
+<header><h1>Fari DMX by VoltagePyromania</h1><span id="st"></span><button id="fl" class="flash">Flash</button><button id="fs" class="hstrobe">Strobo</button><button id="bo">Blackout</button><button id="ed">Modifica</button></header>
 <div id="scenes"></div>
 <div id="app"><p id="msg">Caricamento&hellip;</p></div>
 <script>
@@ -257,38 +263,67 @@ function renderScenes(){
  const list=cfg.scenes||[];
  const chips=list.map(s=>'<span class="scn"><button class="scnr" data-recall="'+s.i+'">'+esc(s.name)+
   '</button><button class="scnx" data-scdel="'+s.i+'" aria-label="elimina">&#10005;</button></span>').join("");
- const seq=(cfg.chaselist||[]).map((slot,pos)=>'<span class="scn"><button class="scnr" disabled>'+esc(sceneName(slot))+
-  '</button><button class="scnx" data-chdel="'+pos+'" aria-label="togli">&#10005;</button></span>').join("");
- const addsel=list.length?'<select id="chadd"><option value="">+ aggiungi</option>'+
-  list.map(s=>'<option value="'+s.i+'">'+esc(s.name)+'</option>').join("")+'</select>':'';
- el.innerHTML=
-  '<div class="scrow">'+chips+'<button class="scadd" id="scadd">+ Salva scena</button></div>'+
-  '<label class="scfade">Dissolvenza <span id="fadev">'+(fadeMs/1000).toFixed(1)+'</span> s'+
-  '<input type="range" id="fade" min="0" max="10000" step="100" value="'+fadeMs+'"></label>'+
-  '<div class="scrow" style="margin-top:12px"><span class="sclbl">Sequenza</span>'+seq+addsel+'</div>'+
-  '<div class="scrow"><button class="chbtn" id="chase">Avvia chase</button><button id="tap">Tap</button>'+
-  '<span class="sclbl">Tempo <span id="tempov">'+(stepMs/1000).toFixed(1)+'</span> s</span></div>';
+ let html='<div class="scrow">'+chips+'<button class="scadd" id="scadd">+ Salva scena</button></div>';
+ if(list.length){
+  const seq=(cfg.chaselist||[]).map((slot,pos)=>'<span class="scn"><button class="scnr" disabled>'+esc(sceneName(slot))+
+   '</button><button class="scnx" data-chdel="'+pos+'" aria-label="togli">&#10005;</button></span>').join("");
+  html+='<label class="scfade">Dissolvenza <span id="fadev">'+(fadeMs/1000).toFixed(1)+'</span> s'+
+   '<input type="range" id="fade" min="0" max="10000" step="100" value="'+fadeMs+'"></label>'+
+   '<div class="scrow" style="margin-top:12px"><span class="sclbl">Sequenza</span>'+seq+
+   '<select id="chadd"><option value="">+ aggiungi</option>'+
+   list.map(s=>'<option value="'+s.i+'">'+esc(s.name)+'</option>').join("")+'</select></div>'+
+   '<div class="scrow"><button class="chbtn" id="chase"'+((cfg.chaselist&&cfg.chaselist.length)?'':' disabled')+'>Avvia chase</button><button id="tap">Tap</button>'+
+   '<span class="sclbl">Tempo <span id="tempov">'+(stepMs/1000).toFixed(1)+'</span> s</span></div>';
+ }else{
+  html+='<p class="hint">Salva un look come scena con "+ Salva scena" per poterlo richiamare e creare sequenze (chase).</p>';
+ }
+ el.innerHTML=html;
  $("#scadd").addEventListener("click",saveScene);
  for(const b of el.querySelectorAll("[data-recall]"))b.addEventListener("click",()=>recallScene(+b.dataset.recall));
- for(const b of el.querySelectorAll("[data-scdel]"))b.addEventListener("click",()=>{if(confirm("Eliminare la scena?"))op("/scenedel?i="+b.dataset.scdel)});
+ for(const b of el.querySelectorAll("[data-scdel]"))b.addEventListener("click",()=>armDel(b,"/scenedel?i="+b.dataset.scdel));
  for(const b of el.querySelectorAll("[data-chdel]"))b.addEventListener("click",()=>op("/chasedel?pos="+b.dataset.chdel));
  const cs=$("#chadd");if(cs)cs.addEventListener("change",()=>{if(cs.value!=="")op("/chaseadd?i="+cs.value)});
- const f=$("#fade");f.addEventListener("input",()=>{fadeMs=+f.value;$("#fadev").textContent=(fadeMs/1000).toFixed(1)});
- $("#chase").addEventListener("click",()=>setChase(!chaseOn));
- $("#tap").addEventListener("click",tap);
+ const f=$("#fade");if(f)f.addEventListener("input",()=>{fadeMs=+f.value;$("#fadev").textContent=(fadeMs/1000).toFixed(1)});
+ const ch=$("#chase");if(ch)ch.addEventListener("click",()=>setChase(!chaseOn));
+ const tp=$("#tap");if(tp)tp.addEventListener("click",tap);
  updateChaseUI();
 }
 async function recallScene(i){
  try{await fetch("/recall?i="+i+"&ms="+fadeMs);ok(true);poll()}catch(e){ok(false)}
 }
-async function saveScene(){
- const name=prompt("Nome della scena:","Scena "+(((cfg.scenes||[]).length)+1));
- if(name===null)return;
- await op("/scenesave?name="+encodeURIComponent(name));
+function saveScene(){
+ const btn=$("#scadd");if(!btn)return;
+ const def="Scena "+(((cfg.scenes||[]).length)+1);
+ const box=document.createElement("span");box.className="scnsave";
+ box.innerHTML='<input id="scin" maxlength="20"><button id="scok">Salva</button><button id="scno" aria-label="annulla">&#10005;</button>';
+ btn.replaceWith(box);
+ const inp=$("#scin");inp.value=def;inp.focus();inp.select();
+ const done=()=>op("/scenesave?name="+encodeURIComponent(inp.value.trim()||def));
+ $("#scok").addEventListener("click",done);
+ $("#scno").addEventListener("click",renderScenes);
+ inp.addEventListener("keydown",e=>{if(e.key==="Enter")done();else if(e.key==="Escape")renderScenes()});
+}
+function armDel(btn,url){
+ if(btn.dataset.armed){op(url);return}
+ btn.dataset.armed="1";btn.classList.add("arm");btn.title="tocca ancora per confermare";
+ setTimeout(()=>{btn.dataset.armed="";btn.classList.remove("arm")},2500);
+}
+function fitView(){
+ const app=$("#app");
+ if(editing||window.innerWidth<760){app.style.removeProperty("--rh");return}
+ const card=app.querySelector(".fix");if(!card||!cfg)return;
+ const n=(cfg.channels||[]).length;if(!n)return;
+ const top=app.getBoundingClientRect().top;
+ const avail=window.innerHeight-top-14;
+ const rhNow=parseFloat(getComputedStyle(app).getPropertyValue("--rh"))||44;
+ const fixed=card.offsetHeight-n*rhNow;
+ let rh=Math.floor((avail-fixed)/n);
+ rh=Math.max(20,Math.min(44,rh));
+ app.style.setProperty("--rh",rh+"px");
 }
 function chaseFade(){return Math.min(fadeMs,stepMs)}
 async function setChase(on){
- if(on&&!(cfg.chaselist&&cfg.chaselist.length)){alert("Aggiungi prima delle scene alla sequenza");return}
+ if(on&&!(cfg.chaselist&&cfg.chaselist.length))return;
  chaseOn=on;updateChaseUI();
  try{await fetch("/chase?on="+(on?1:0)+"&step="+stepMs+"&fade="+chaseFade());ok(true);if(on)poll()}catch(e){ok(false)}
 }
@@ -358,11 +393,11 @@ function wire(){
   for(const i of $$(".gname"))
    i.addEventListener("change",()=>op("/gren?g="+i.dataset.g+"&name="+encodeURIComponent(i.value)));
   for(const b of $$(".gdel"))
-   b.addEventListener("click",()=>{if(confirm("Eliminare il gruppo? I suoi fari passano al primo gruppo."))op("/gdel?g="+b.dataset.g)});
+   b.addEventListener("click",()=>armDel(b,"/gdel?g="+b.dataset.g));
   for(const s of $$("select[data-fx]"))
    s.addEventListener("change",()=>op("/assign?fx="+s.dataset.fx+"&g="+s.value));
   const ga=$("#gadd");if(ga)ga.addEventListener("click",()=>op("/gadd?name="+encodeURIComponent("Gruppo "+(cfg.groups.length+1))));
-  const gr=$("#grst");if(gr)gr.addEventListener("click",()=>{if(confirm("Tornare a gruppi e assegnazioni di default?"))op("/greset")});
+  const gr=$("#grst");if(gr)gr.addEventListener("click",()=>armDel(gr,"/greset"));
  }else{
   for(const i of $$("input[type=range]")){
    i.addEventListener("input",()=>{touched[keyOf(i)]=Date.now();upd(valId(i),+i.value);queue(i,+i.value)});
@@ -383,9 +418,10 @@ async function refresh(){
  renderScenes();
  wire();applyState(st,false);
  $("#ed").textContent=editing?"Fine":"Modifica";
+ fitView();
 }
 async function op(url){
- try{const r=await fetch(url);if(!r.ok)alert(await r.text());ok(true)}catch(e){ok(false)}
+ try{const r=await fetch(url);ok(r.ok)}catch(e){ok(false)}
  try{await refresh()}catch(e){ok(false)}
 }
 async function init(){
@@ -400,6 +436,8 @@ $("#bo").addEventListener("click",async()=>{
 });
 $("#ed").addEventListener("click",()=>{editing=!editing;refresh().catch(()=>ok(false))});
 bindBump($("#fl"),"/flash?g=0");
+bindBump($("#fs"),"/strobe?g=0");
+window.addEventListener("resize",()=>{if(cfg&&!editing)fitView()});
 async function poll(){
  clearTimeout(polling);
  let next=3000;
