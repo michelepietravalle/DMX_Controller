@@ -85,8 +85,45 @@ const size_t N_CHANNELS = sizeof(CHANNELS) / sizeof(CHANNELS[0]);
 const uint8_t FLASH[N_CHANNELS] = { 255, 0, 0, 0, 255, 0, 0, 0, 0 };
 // Mentre il pulsante e' premuto, il tablet rinfresca il flash ~ogni 250 ms;
 // al rilascio il bianco sparisce entro questo tempo anche se il messaggio di
-// rilascio si perde (rete di sicurezza contro il "flash incantato").
+// rilascio si perde (rete di sicurezza contro il "flash incantato"). Vale
+// anche per lo strobo.
 const uint32_t FLASH_HOLD_MS = 600;
+
+// Strobo momentaneo: mentre il pulsante e' premuto esce un flash bianco che
+// pulsa, ottenuto col canale strobo del faro. STROBE_CHANNEL e' l'indice in
+// CHANNELS[] del canale strobo (qui 6 = CH7); -1 per disattivarlo (e nascondere
+// il pulsante). STROBE_VALUE e' la velocita' di lampeggio (0..255).
+const int STROBE_CHANNEL = 6;
+const uint8_t STROBE_VALUE = 200;
+
+// --------------------- palette di colori rapidi ------------------------
+// I canali colore sono contigui in CHANNELS[]: qui gli indici 1..5
+// (rosso, verde, blu, bianco, ambra). COLOR_FIRST = primo indice colore,
+// COLOR_COUNT = quanti canali colore consecutivi.
+const uint8_t COLOR_FIRST = 1;
+const uint8_t COLOR_COUNT = 5;
+
+// Ogni voce della palette da' i valori dei COLOR_COUNT canali colore (qui
+// R,G,B,W,Ambra). Un tap imposta SOLO questi canali del gruppo, l'intensita'
+// resta com'e'. "swatch" e' il pallino mostrato nella pagina. Modificabile.
+struct PaletteDef {
+  const char *swatch;
+  uint8_t v[COLOR_COUNT];
+};
+
+const PaletteDef PALETTE[] = {
+  { "#ff453a", { 255, 0, 0, 0, 0 } },     // rosso
+  { "#ff9f0a", { 0, 0, 0, 0, 255 } },     // ambra (LED ambra)
+  { "#ffd60a", { 255, 160, 0, 0, 0 } },   // giallo
+  { "#32d74b", { 0, 255, 0, 0, 0 } },     // verde
+  { "#64d2ff", { 0, 200, 255, 0, 0 } },   // ciano
+  { "#0a84ff", { 0, 0, 255, 0, 0 } },     // blu
+  { "#bf5af2", { 160, 0, 255, 0, 0 } },   // viola
+  { "#ff375f", { 255, 0, 150, 0, 0 } },   // magenta
+  { "#ffffff", { 0, 0, 0, 255, 0 } },     // bianco (LED bianco)
+  { "#ffcc88", { 120, 30, 0, 180, 60 } }, // bianco caldo
+};
+const size_t N_PALETTE = sizeof(PALETTE) / sizeof(PALETTE[0]);
 
 // ----------------------------- i fari ----------------------------------
 // Nome + indirizzo DMX di partenza. Ogni faro occupa N_CHANNELS canali con il
@@ -111,6 +148,7 @@ const size_t N_FIXTURES = sizeof(FIXTURES) / sizeof(FIXTURES[0]);
 const char *GROUPS[] = { "Gruppo 1", "Gruppo 2" };
 const size_t N_GROUPS = sizeof(GROUPS) / sizeof(GROUPS[0]);
 const size_t MAX_GROUPS = 8;
+const size_t MAX_SCENES = 12;  // quante scene si possono memorizzare
 
 // Gruppo di default di ogni faro (1..N_GROUPS), nello stesso ordine di FIXTURES[].
 const uint8_t FIXTURE_GROUP[N_FIXTURES] = { 1, 1, 1, 2, 2 };
@@ -135,14 +173,31 @@ button{background:#26262c;border:1px solid #3a3a42;color:#ececf1;border-radius:1
 button:active{background:#3a3a42}
 .flash{background:#ececf1;color:#16161a;border-color:#ececf1;font-weight:500;touch-action:none}
 .flash:active{background:#fff;border-color:#fff}
-.gflash{width:100%;margin-top:12px;padding:13px;background:#ececf1;color:#16161a;border:1px solid #ececf1;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
+.brow{display:flex;gap:10px;margin-top:12px}
+.gflash,.gstrobe{flex:1;padding:13px;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
+.gflash{background:#ececf1;color:#16161a;border:1px solid #ececf1}
 .gflash:active{background:#fff}
+.gstrobe{background:#26262c;color:#ececf1;border:1px solid #5a5a64}
+.gstrobe:active{background:#3a3a42}
+#scenes:not(:empty){margin:0 0 16px}
+.scrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.scn{display:inline-flex;border:1px solid #3a3a42;border-radius:10px;overflow:hidden}
+.scnr{background:#26262c;border:0;color:#ececf1;font-size:14px;padding:9px 13px;cursor:pointer}
+.scnr:active{background:#3a3a42}
+.scnx{background:#26262c;border:0;border-left:1px solid #3a3a42;color:#9a9aa3;font-size:13px;padding:9px 10px;cursor:pointer}
+.scnx:active{background:#4a2a2a;color:#ff453a}
+.scadd{padding:9px 13px}
+.scfade{display:flex;align-items:center;gap:10px;font-size:14px;color:#9a9aa3;max-width:380px}
+.scfade input{flex:1}
 #app.view{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
 #app.view .fix{margin-bottom:0}
 #app.edit{max-width:560px;margin:0 auto}
 .fix{background:#1a1a1f;border:1px solid #2a2a31;border-radius:14px;padding:14px 16px;margin-bottom:14px}
 .fix h2{font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9a9aa3;margin:0 0 2px}
 .cap{color:#8a8a93;font-size:13px;margin:0 0 8px}
+.pal{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.sw{width:30px;height:30px;min-width:30px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.18);cursor:pointer}
+.sw:active{transform:scale(.9)}
 .row{display:grid;grid-template-columns:100px 1fr 40px;gap:12px;align-items:center;padding:6px 0}
 .master{border-bottom:1px solid #2a2a31;padding-bottom:10px;margin-bottom:6px}
 .lbl{display:flex;align-items:center;gap:8px;font-size:14px;overflow:hidden;white-space:nowrap}
@@ -158,13 +213,14 @@ select{width:100%;background:#26262c;border:1px solid #3a3a42;color:#ececf1;bord
 #msg{color:#9a9aa3;font-size:14px}
 </style></head><body>
 <header><h1>Fari DMX</h1><span id="st"></span><button id="fl" class="flash">Flash</button><button id="bo">Blackout</button><button id="ed">Modifica</button></header>
+<div id="scenes"></div>
 <div id="app"><p id="msg">Caricamento&hellip;</p></div>
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
 const touched={},lastSent={},timers={};
-let cfg=null,editing=false;
+let cfg=null,editing=false,fadeMs=2000,polling=null;
 function ok(b){$("#st").className=b?"ok":"err"}
 function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function upd(id,v){const e=document.getElementById(id);if(e)e.textContent=v}
@@ -180,14 +236,44 @@ function queue(i,v,force){
  if(force||!lastSent[k]||now-lastSent[k]>40){lastSent[k]=now;send(i,v)}
  else timers[k]=setTimeout(()=>{lastSent[k]=Date.now();send(i,v)},45);
 }
-function bindFlash(btn,g){
+function bindBump(btn,base){
  let hb=null;
- const on=()=>{if(hb)return;const beat=()=>fetch("/flash?g="+g+"&on=1").then(()=>ok(true)).catch(()=>ok(false));beat();hb=setInterval(beat,250)};
- const off=()=>{if(hb){clearInterval(hb);hb=null}fetch("/flash?g="+g+"&on=0").catch(()=>{})};
+ const on=()=>{if(hb)return;const beat=()=>fetch(base+"&on=1").then(()=>ok(true)).catch(()=>ok(false));beat();hb=setInterval(beat,250)};
+ const off=()=>{if(hb){clearInterval(hb);hb=null}fetch(base+"&on=0").catch(()=>{})};
  btn.addEventListener("pointerdown",e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId)}catch(_){}on()});
  btn.addEventListener("pointerup",off);
  btn.addEventListener("pointercancel",off);
  btn.addEventListener("lostpointercapture",off);
+}
+function renderScenes(){
+ const el=$("#scenes");
+ if(editing||!cfg){el.innerHTML="";return}
+ const list=cfg.scenes||[];
+ const chips=list.map(s=>'<span class="scn"><button class="scnr" data-recall="'+s.i+'">'+esc(s.name)+
+  '</button><button class="scnx" data-scdel="'+s.i+'" aria-label="elimina">&#10005;</button></span>').join("");
+ el.innerHTML='<div class="scrow">'+chips+'<button class="scadd" id="scadd">+ Salva scena</button></div>'+
+  '<label class="scfade">Dissolvenza <span id="fadev">'+(fadeMs/1000).toFixed(1)+'</span> s'+
+  '<input type="range" id="fade" min="0" max="10000" step="100" value="'+fadeMs+'"></label>';
+ $("#scadd").addEventListener("click",saveScene);
+ for(const b of el.querySelectorAll("[data-recall]"))b.addEventListener("click",()=>recallScene(+b.dataset.recall));
+ for(const b of el.querySelectorAll("[data-scdel]"))b.addEventListener("click",()=>{if(confirm("Eliminare la scena?"))op("/scenedel?i="+b.dataset.scdel)});
+ const f=$("#fade");f.addEventListener("input",()=>{fadeMs=+f.value;$("#fadev").textContent=(fadeMs/1000).toFixed(1)});
+}
+async function recallScene(i){
+ try{await fetch("/recall?i="+i+"&ms="+fadeMs);ok(true);poll()}catch(e){ok(false)}
+}
+async function saveScene(){
+ const name=prompt("Nome della scena:","Scena "+(((cfg.scenes||[]).length)+1));
+ if(name===null)return;
+ await op("/scenesave?name="+encodeURIComponent(name));
+}
+function palHtml(gid){
+ if(!cfg.palette||!cfg.palette.length)return "";
+ return '<div class="pal">'+cfg.palette.map((sw,pi)=>
+  '<button class="sw" data-g="'+gid+'" data-p="'+pi+'" style="background:'+sw+'" aria-label="colore '+(pi+1)+'"></button>').join("")+'</div>';
+}
+async function applyPalette(g,p){
+ try{await fetch("/palette?g="+g+"&p="+p);const st=await(await fetch("/state")).json();applyState(st,false);ok(true)}catch(e){ok(false)}
 }
 function chanRow(gid,ch,ci){
  return '<div class="row'+(ci===0?' master':'')+'"><span class="lbl"><span class="dot" style="background:'+ch.color+'"></span>'+esc(ch.label)+
@@ -198,8 +284,10 @@ function viewHtml(){
  return cfg.groups.map(g=>{
   const fx=fixOf(g.id).map(f=>esc(f.name)).join(", ")||"nessun faro";
   return '<div class="fix"><h2>'+esc(g.name)+'</h2><p class="cap">'+fx+'</p>'+
+   palHtml(g.id)+
    cfg.channels.map((c,ci)=>chanRow(g.id,c,ci)).join("")+
-   '<button class="gflash" data-flash="'+g.id+'">Flash bianco</button></div>';
+   '<div class="brow"><button class="gflash" data-flash="'+g.id+'">Flash bianco</button>'+
+   (cfg.hasStrobe?'<button class="gstrobe" data-strobe="'+g.id+'">Strobo</button>':'')+'</div></div>';
  }).join("");
 }
 function optsHtml(cur){
@@ -242,7 +330,9 @@ function wire(){
    i.addEventListener("input",()=>{touched[keyOf(i)]=Date.now();upd(valId(i),+i.value);queue(i,+i.value)});
    i.addEventListener("change",()=>{touched[keyOf(i)]=Date.now();queue(i,+i.value,true)});
   }
-  for(const b of $$("[data-flash]"))bindFlash(b,+b.dataset.flash);
+  for(const b of $$("[data-flash]"))bindBump(b,"/flash?g="+b.dataset.flash);
+  for(const b of $$("[data-strobe]"))bindBump(b,"/strobe?g="+b.dataset.strobe);
+  for(const b of $$(".sw"))b.addEventListener("click",()=>applyPalette(b.dataset.g,b.dataset.p));
  }
 }
 async function refresh(){
@@ -252,6 +342,7 @@ async function refresh(){
  const app=$("#app");
  app.className=editing?"edit":"view";
  app.innerHTML=editing?editHtml():viewHtml();
+ renderScenes();
  wire();applyState(st,false);
  $("#ed").textContent=editing?"Fine":"Modifica";
 }
@@ -270,11 +361,16 @@ $("#bo").addEventListener("click",async()=>{
  }catch(e){ok(false)}
 });
 $("#ed").addEventListener("click",()=>{editing=!editing;refresh().catch(()=>ok(false))});
-bindFlash($("#fl"),0);
-setInterval(async()=>{
- if(editing)return;
- try{const st=await(await fetch("/state")).json();ok(true);applyState(st,true)}catch(e){ok(false)}
-},3000);
+bindBump($("#fl"),"/flash?g=0");
+async function poll(){
+ clearTimeout(polling);
+ let next=3000;
+ if(!editing){
+  try{const st=await(await fetch("/state")).json();ok(true);applyState(st,true);if(st.fading)next=200}catch(e){ok(false)}
+ }
+ polling=setTimeout(poll,next);
+}
+poll();
 init();
 </script></body></html>)HTML";
 
@@ -289,7 +385,22 @@ size_t nGroups = 0;
 uint8_t fixGroup[N_FIXTURES];                      // id del gruppo di ogni faro
 uint8_t groupVal[MAX_GROUPS + 1][N_CHANNELS];      // [id gruppo][canale] = 0..255
 uint32_t flashUntil[MAX_GROUPS + 1] = { 0 };       // millis() fino a cui il gruppo lampeggia bianco
+uint32_t strobeUntil[MAX_GROUPS + 1] = { 0 };      // millis() fino a cui il gruppo fa strobo
 uint8_t dmxData[DMX_SLOTS + 1] = { 0 };            // buffer trasmesso, [0] = start code
+
+// scene: ogni scena salva i valori di tutti i canali di tutti i gruppi
+struct Scene {
+  bool used;
+  char name[24];
+  uint8_t v[MAX_GROUPS + 1][N_CHANNELS];
+};
+Scene scenes[MAX_SCENES];                          // azzerato all'avvio (tutte non usate)
+
+// motore di dissolvenza per il richiamo delle scene
+bool fading = false;
+uint32_t fadeStart = 0, fadeDur = 0;
+uint8_t fadeFrom[MAX_GROUPS + 1][N_CHANNELS];
+uint8_t fadeTo[MAX_GROUPS + 1][N_CHANNELS];
 Preferences prefs;
 WebServer server(80);
 DNSServer dnsServer;
@@ -338,6 +449,7 @@ void applyDefaultConfig() {
 void resetLevels() {
   for (size_t g = 0; g <= MAX_GROUPS; g++) {
     flashUntil[g] = 0;
+    strobeUntil[g] = 0;
     for (size_t c = 0; c < N_CHANNELS; c++) groupVal[g][c] = 0;
   }
 }
@@ -417,6 +529,61 @@ void loadConfig() {
     if (groupIndexById(fixGroup[i]) < 0) fixGroup[i] = groups[0].id;
 }
 
+// ------------------------------- scene ----------------------------------
+void saveScenesNVS() {
+  prefs.begin("faridmx", false);
+  prefs.putBytes("scenes", scenes, sizeof(scenes));
+  prefs.end();
+}
+
+void loadScenesNVS() {
+  prefs.begin("faridmx", true);
+  size_t len = prefs.getBytesLength("scenes");
+  if (len == sizeof(scenes)) prefs.getBytes("scenes", scenes, sizeof(scenes));  // solo se il formato combacia
+  prefs.end();
+}
+
+// avvia la dissolvenza dal look attuale verso la scena idx, in ms millisecondi
+void recallScene(int idx, uint32_t ms) {
+  for (size_t i = 0; i < nGroups; i++) {
+    uint8_t id = groups[i].id;
+    for (size_t c = 0; c < N_CHANNELS; c++) {
+      fadeFrom[id][c] = groupVal[id][c];
+      fadeTo[id][c] = scenes[idx].v[id][c];
+    }
+  }
+  if (ms == 0) {
+    for (size_t i = 0; i < nGroups; i++) {
+      uint8_t id = groups[i].id;
+      for (size_t c = 0; c < N_CHANNELS; c++) groupVal[id][c] = fadeTo[id][c];
+    }
+    fading = false;
+  } else {
+    fadeStart = millis();
+    fadeDur = ms;
+    fading = true;
+  }
+}
+
+// avanza la dissolvenza: scrive in groupVal i valori interpolati from->to
+void fadeUpdate() {
+  if (!fading) return;
+  uint32_t el = millis() - fadeStart;
+  bool done = el >= fadeDur;
+  for (size_t i = 0; i < nGroups; i++) {
+    uint8_t id = groups[i].id;
+    for (size_t c = 0; c < N_CHANNELS; c++) {
+      if (done) {
+        groupVal[id][c] = fadeTo[id][c];
+      } else {
+        int from = fadeFrom[id][c], to = fadeTo[id][c];
+        groupVal[id][c] = (uint8_t)(from + (int32_t)(to - from) * (int32_t)el / (int32_t)fadeDur);
+      }
+    }
+  }
+  if (done) fading = false;
+}
+
 // ------------------------------- DMX ------------------------------------
 void dmxBegin() {
   pinMode(DMX_TX_PIN, OUTPUT);
@@ -434,20 +601,30 @@ void dmxBegin() {
 
 void dmxRender() {
   // ogni faro prende i canali del suo gruppo; se il gruppo sta lampeggiando
-  // (pulsante flash premuto) esce invece il bianco pieno del profilo FLASH[]
+  // (flash) esce il bianco pieno FLASH[]; con lo strobo esce lo stesso bianco
+  // ma col canale strobo attivo. Il flash, se entrambi premuti, ha la priorita'.
   uint32_t now = millis();
   for (size_t f = 0; f < N_FIXTURES; f++) {
     uint8_t id = fixGroup[f];
     if (groupIndexById(id) < 0) continue;
     bool flashing = flashUntil[id] != 0 && (int32_t)(flashUntil[id] - now) > 0;
+    bool strobing = strobeUntil[id] != 0 && (int32_t)(strobeUntil[id] - now) > 0;
     for (size_t c = 0; c < N_CHANNELS; c++) {
       uint16_t addr = FIXTURES[f].address + CHANNELS[c].offset;
-      if (addr >= 1 && addr <= DMX_SLOTS) dmxData[addr] = flashing ? FLASH[c] : groupVal[id][c];
+      if (addr < 1 || addr > DMX_SLOTS) continue;
+      uint8_t val = groupVal[id][c];
+      if (strobing) {
+        val = FLASH[c];
+        if ((int)c == STROBE_CHANNEL) val = STROBE_VALUE;
+      }
+      if (flashing) val = FLASH[c];
+      dmxData[addr] = val;
     }
   }
 }
 
 void dmxSendFrame() {
+  fadeUpdate();  // se una scena sta sfumando, aggiorna i livelli prima di costruire il frame
   dmxRender();
   DMX.flush();                // attende che il frame precedente sia uscito tutto
   DMX.updateBaudRate(83333);  // BREAK: uno 0x00 a 83.3 kbaud = 108 us di linea bassa
@@ -504,6 +681,81 @@ void handleFlash() {
   server.send(200, "text/plain", "ok");
 }
 
+// applica un colore della palette al gruppo: imposta solo i canali colore
+void handlePalette() {
+  int g = server.arg("g").toInt();
+  int p = server.arg("p").toInt();
+  if (g < 1 || g > (int)MAX_GROUPS || groupIndexById((uint8_t)g) < 0 || p < 0 || p >= (int)N_PALETTE) {
+    server.send(400, "text/plain", "parametri non validi");
+    return;
+  }
+  for (size_t k = 0; k < COLOR_COUNT; k++) groupVal[g][COLOR_FIRST + k] = PALETTE[p].v[k];
+  server.send(200, "text/plain", "ok");
+}
+
+// richiama una scena con dissolvenza ms (0 = a scatto)
+void handleRecall() {
+  int i = server.arg("i").toInt();
+  uint32_t ms = server.hasArg("ms") ? (uint32_t)server.arg("ms").toInt() : 2000;
+  if (i < 0 || i >= (int)MAX_SCENES || !scenes[i].used) {
+    server.send(400, "text/plain", "scena inesistente");
+    return;
+  }
+  if (ms > 60000) ms = 60000;  // limite di sicurezza
+  recallScene(i, ms);
+  server.send(200, "text/plain", "ok");
+}
+
+// salva il look attuale in una scena (slot ?i= esplicito, o il primo libero)
+void handleSceneSave() {
+  int slot = server.hasArg("i") ? server.arg("i").toInt() : -1;
+  if (slot < 0) {
+    for (size_t k = 0; k < MAX_SCENES; k++)
+      if (!scenes[k].used) { slot = (int)k; break; }
+  }
+  if (slot < 0 || slot >= (int)MAX_SCENES) {
+    server.send(400, "text/plain", "memoria scene piena");
+    return;
+  }
+  scenes[slot].used = true;
+  cleanName(server.arg("name")).toCharArray(scenes[slot].name, sizeof(scenes[slot].name));
+  memset(scenes[slot].v, 0, sizeof(scenes[slot].v));
+  for (size_t i = 0; i < nGroups; i++) {
+    uint8_t id = groups[i].id;
+    for (size_t c = 0; c < N_CHANNELS; c++) scenes[slot].v[id][c] = groupVal[id][c];
+  }
+  saveScenesNVS();
+  server.send(200, "text/plain", "ok");
+}
+
+void handleSceneDel() {
+  int i = server.arg("i").toInt();
+  if (i < 0 || i >= (int)MAX_SCENES || !scenes[i].used) {
+    server.send(400, "text/plain", "scena inesistente");
+    return;
+  }
+  scenes[i].used = false;
+  scenes[i].name[0] = '\0';
+  saveScenesNVS();
+  server.send(200, "text/plain", "ok");
+}
+
+// strobo momentaneo, stessa meccanica del flash (g=0 = tutti i gruppi)
+void handleStrobe() {
+  int g = server.arg("g").toInt();
+  bool on = server.arg("on").toInt() != 0;
+  uint32_t until = on ? millis() + FLASH_HOLD_MS : 0;
+  if (g == 0) {
+    for (size_t i = 0; i < nGroups; i++) strobeUntil[groups[i].id] = until;
+  } else if (g >= 1 && g <= (int)MAX_GROUPS && groupIndexById((uint8_t)g) >= 0) {
+    strobeUntil[g] = until;
+  } else {
+    server.send(400, "text/plain", "parametri non validi");
+    return;
+  }
+  server.send(200, "text/plain", "ok");
+}
+
 void handleGroupAdd() {
   if (nGroups >= MAX_GROUPS) {
     server.send(400, "text/plain", "troppi gruppi (max 8)");
@@ -516,6 +768,7 @@ void handleGroupAdd() {
   groups[nGroups].name = cleanName(server.arg("name"));
   nGroups++;
   flashUntil[id] = 0;
+  strobeUntil[id] = 0;
   for (size_t c = 0; c < N_CHANNELS; c++) groupVal[id][c] = 0;
   saveConfig();
   server.send(200, "text/plain", "ok");
@@ -547,6 +800,7 @@ void handleGroupDelete() {
   for (size_t i = idx; i + 1 < nGroups; i++) groups[i] = groups[i + 1];
   nGroups--;
   flashUntil[g] = 0;
+  strobeUntil[g] = 0;
   uint8_t fallback = groups[0].id;
   for (size_t i = 0; i < N_FIXTURES; i++)
     if (fixGroup[i] == (uint8_t)g) fixGroup[i] = fallback;
@@ -586,7 +840,9 @@ void handleState() {
     }
     j += ']';
   }
-  j += "}}";
+  j += "},\"fading\":";
+  j += fading ? "true" : "false";
+  j += "}";
   server.send(200, "application/json", j);
 }
 
@@ -621,6 +877,27 @@ void handleConfig() {
     j += ",\"g\":";
     j += String(fixGroup[i]);
     j += "}";
+  }
+  j += "],\"hasStrobe\":";
+  j += (STROBE_CHANNEL >= 0 && STROBE_CHANNEL < (int)N_CHANNELS) ? "true" : "false";
+  j += ",\"palette\":[";
+  for (size_t i = 0; i < N_PALETTE; i++) {
+    if (i) j += ',';
+    j += '"';
+    j += PALETTE[i].swatch;
+    j += '"';
+  }
+  j += "],\"scenes\":[";
+  bool firstScene = true;
+  for (size_t i = 0; i < MAX_SCENES; i++) {
+    if (!scenes[i].used) continue;
+    if (!firstScene) j += ',';
+    firstScene = false;
+    j += "{\"i\":";
+    j += String(i);
+    j += ",\"name\":\"";
+    j += scenes[i].name;
+    j += "\"}";
   }
   j += "]}";
   server.send(200, "application/json", j);
@@ -674,6 +951,7 @@ void setup() {
 
   resetLevels();
   loadConfig();
+  loadScenesNVS();
 
   dmxBegin();
   wifiBegin();
@@ -682,6 +960,11 @@ void setup() {
   server.on("/set", handleSet);
   server.on("/all", handleAll);
   server.on("/flash", handleFlash);
+  server.on("/strobe", handleStrobe);
+  server.on("/palette", handlePalette);
+  server.on("/recall", handleRecall);
+  server.on("/scenesave", handleSceneSave);
+  server.on("/scenedel", handleSceneDel);
   server.on("/gadd", handleGroupAdd);
   server.on("/gren", handleGroupRename);
   server.on("/gdel", handleGroupDelete);
