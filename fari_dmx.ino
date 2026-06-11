@@ -79,6 +79,15 @@ const ChannelDef CHANNELS[] = {
 };
 const size_t N_CHANNELS = sizeof(CHANNELS) / sizeof(CHANNELS[0]);
 
+// Valori dei canali durante un "flash bianco" (stesso ordine di CHANNELS[]):
+// bianco pieno a piena intensita', tutto il resto a zero. Personalizzabile
+// (es. metti 255 anche su Ambra per un flash piu' caldo).
+const uint8_t FLASH[N_CHANNELS] = { 255, 0, 0, 0, 255, 0, 0, 0, 0 };
+// Mentre il pulsante e' premuto, il tablet rinfresca il flash ~ogni 250 ms;
+// al rilascio il bianco sparisce entro questo tempo anche se il messaggio di
+// rilascio si perde (rete di sicurezza contro il "flash incantato").
+const uint32_t FLASH_HOLD_MS = 600;
+
 // ----------------------------- i fari ----------------------------------
 // Nome + indirizzo DMX di partenza. Ogni faro occupa N_CHANNELS canali con il
 // profilo CHANNELS qui sopra (qui 9 canali, quindi indirizzi 1,10,19,28,37).
@@ -116,14 +125,21 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 <style>
 :root{color-scheme:dark}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0 auto;max-width:560px;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#0f0f12;color:#ececf1}
-header{display:flex;align-items:center;gap:10px;margin:4px 0 18px}
+body{margin:0 auto;max-width:1300px;padding:16px;font-family:system-ui,-apple-system,sans-serif;background:#0f0f12;color:#ececf1}
+header{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 18px}
 h1{font-size:20px;margin:0;flex:1}
 #st{width:10px;height:10px;border-radius:50%;background:#777;flex:none}
 #st.ok{background:#32d74b}
 #st.err{background:#ff453a}
 button{background:#26262c;border:1px solid #3a3a42;color:#ececf1;border-radius:10px;padding:9px 13px;font-size:14px;cursor:pointer}
 button:active{background:#3a3a42}
+.flash{background:#ececf1;color:#16161a;border-color:#ececf1;font-weight:500;touch-action:none}
+.flash:active{background:#fff;border-color:#fff}
+.gflash{width:100%;margin-top:12px;padding:13px;background:#ececf1;color:#16161a;border:1px solid #ececf1;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none}
+.gflash:active{background:#fff}
+#app.view{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:start}
+#app.view .fix{margin-bottom:0}
+#app.edit{max-width:560px;margin:0 auto}
 .fix{background:#1a1a1f;border:1px solid #2a2a31;border-radius:14px;padding:14px 16px;margin-bottom:14px}
 .fix h2{font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#9a9aa3;margin:0 0 2px}
 .cap{color:#8a8a93;font-size:13px;margin:0 0 8px}
@@ -141,7 +157,7 @@ select{width:100%;background:#26262c;border:1px solid #3a3a42;color:#ececf1;bord
 .hint{color:#9a9aa3;font-size:13px;margin:2px 0 4px}
 #msg{color:#9a9aa3;font-size:14px}
 </style></head><body>
-<header><h1>Fari DMX</h1><span id="st"></span><button id="bo">Blackout</button><button id="ed">Modifica</button></header>
+<header><h1>Fari DMX</h1><span id="st"></span><button id="fl" class="flash">Flash</button><button id="bo">Blackout</button><button id="ed">Modifica</button></header>
 <div id="app"><p id="msg">Caricamento&hellip;</p></div>
 <script>
 "use strict";
@@ -164,6 +180,15 @@ function queue(i,v,force){
  if(force||!lastSent[k]||now-lastSent[k]>40){lastSent[k]=now;send(i,v)}
  else timers[k]=setTimeout(()=>{lastSent[k]=Date.now();send(i,v)},45);
 }
+function bindFlash(btn,g){
+ let hb=null;
+ const on=()=>{if(hb)return;const beat=()=>fetch("/flash?g="+g+"&on=1").then(()=>ok(true)).catch(()=>ok(false));beat();hb=setInterval(beat,250)};
+ const off=()=>{if(hb){clearInterval(hb);hb=null}fetch("/flash?g="+g+"&on=0").catch(()=>{})};
+ btn.addEventListener("pointerdown",e=>{e.preventDefault();try{btn.setPointerCapture(e.pointerId)}catch(_){}on()});
+ btn.addEventListener("pointerup",off);
+ btn.addEventListener("pointercancel",off);
+ btn.addEventListener("lostpointercapture",off);
+}
 function chanRow(gid,ch,ci){
  return '<div class="row'+(ci===0?' master':'')+'"><span class="lbl"><span class="dot" style="background:'+ch.color+'"></span>'+esc(ch.label)+
   '</span><input type="range" min="0" max="255" value="0" data-g="'+gid+'" data-c="'+ci+'" style="accent-color:'+ch.color+
@@ -173,7 +198,8 @@ function viewHtml(){
  return cfg.groups.map(g=>{
   const fx=fixOf(g.id).map(f=>esc(f.name)).join(", ")||"nessun faro";
   return '<div class="fix"><h2>'+esc(g.name)+'</h2><p class="cap">'+fx+'</p>'+
-   cfg.channels.map((c,ci)=>chanRow(g.id,c,ci)).join("")+'</div>';
+   cfg.channels.map((c,ci)=>chanRow(g.id,c,ci)).join("")+
+   '<button class="gflash" data-flash="'+g.id+'">Flash bianco</button></div>';
  }).join("");
 }
 function optsHtml(cur){
@@ -216,13 +242,16 @@ function wire(){
    i.addEventListener("input",()=>{touched[keyOf(i)]=Date.now();upd(valId(i),+i.value);queue(i,+i.value)});
    i.addEventListener("change",()=>{touched[keyOf(i)]=Date.now();queue(i,+i.value,true)});
   }
+  for(const b of $$("[data-flash]"))bindFlash(b,+b.dataset.flash);
  }
 }
 async function refresh(){
  const c=await(await fetch("/config")).json();
  const st=await(await fetch("/state")).json();
  cfg=c;
- $("#app").innerHTML=editing?editHtml():viewHtml();
+ const app=$("#app");
+ app.className=editing?"edit":"view";
+ app.innerHTML=editing?editHtml():viewHtml();
  wire();applyState(st,false);
  $("#ed").textContent=editing?"Fine":"Modifica";
 }
@@ -232,7 +261,7 @@ async function op(url){
 }
 async function init(){
  try{await refresh();ok(true)}
- catch(e){$("#app").innerHTML='<p id="msg">Connessione fallita, riprovo&hellip;</p>';ok(false);setTimeout(init,2000)}
+ catch(e){const a=$("#app");a.className="";a.innerHTML='<p id="msg">Connessione fallita, riprovo&hellip;</p>';ok(false);setTimeout(init,2000)}
 }
 $("#bo").addEventListener("click",async()=>{
  try{
@@ -241,6 +270,7 @@ $("#bo").addEventListener("click",async()=>{
  }catch(e){ok(false)}
 });
 $("#ed").addEventListener("click",()=>{editing=!editing;refresh().catch(()=>ok(false))});
+bindFlash($("#fl"),0);
 setInterval(async()=>{
  if(editing)return;
  try{const st=await(await fetch("/state")).json();ok(true);applyState(st,true)}catch(e){ok(false)}
@@ -258,6 +288,7 @@ GroupDef groups[MAX_GROUPS];
 size_t nGroups = 0;
 uint8_t fixGroup[N_FIXTURES];                      // id del gruppo di ogni faro
 uint8_t groupVal[MAX_GROUPS + 1][N_CHANNELS];      // [id gruppo][canale] = 0..255
+uint32_t flashUntil[MAX_GROUPS + 1] = { 0 };       // millis() fino a cui il gruppo lampeggia bianco
 uint8_t dmxData[DMX_SLOTS + 1] = { 0 };            // buffer trasmesso, [0] = start code
 Preferences prefs;
 WebServer server(80);
@@ -305,8 +336,10 @@ void applyDefaultConfig() {
 }
 
 void resetLevels() {
-  for (size_t g = 0; g <= MAX_GROUPS; g++)
+  for (size_t g = 0; g <= MAX_GROUPS; g++) {
+    flashUntil[g] = 0;
     for (size_t c = 0; c < N_CHANNELS; c++) groupVal[g][c] = 0;
+  }
 }
 
 void saveConfig() {
@@ -400,13 +433,16 @@ void dmxBegin() {
 }
 
 void dmxRender() {
-  // ogni faro prende, tale e quale, i canali del suo gruppo
+  // ogni faro prende i canali del suo gruppo; se il gruppo sta lampeggiando
+  // (pulsante flash premuto) esce invece il bianco pieno del profilo FLASH[]
+  uint32_t now = millis();
   for (size_t f = 0; f < N_FIXTURES; f++) {
     uint8_t id = fixGroup[f];
     if (groupIndexById(id) < 0) continue;
+    bool flashing = flashUntil[id] != 0 && (int32_t)(flashUntil[id] - now) > 0;
     for (size_t c = 0; c < N_CHANNELS; c++) {
       uint16_t addr = FIXTURES[f].address + CHANNELS[c].offset;
-      if (addr >= 1 && addr <= DMX_SLOTS) dmxData[addr] = groupVal[id][c];
+      if (addr >= 1 && addr <= DMX_SLOTS) dmxData[addr] = flashing ? FLASH[c] : groupVal[id][c];
     }
   }
 }
@@ -450,6 +486,24 @@ void handleAll() {
   server.send(200, "text/plain", "ok");
 }
 
+// flash bianco momentaneo: g=0 tutti i gruppi, on=1 premuto / on=0 rilasciato.
+// Il pulsante rinfresca on=1 mentre e' premuto; il flash scade da solo dopo
+// FLASH_HOLD_MS dall'ultimo messaggio, quindi non resta mai "incantato".
+void handleFlash() {
+  int g = server.arg("g").toInt();
+  bool on = server.arg("on").toInt() != 0;
+  uint32_t until = on ? millis() + FLASH_HOLD_MS : 0;
+  if (g == 0) {
+    for (size_t i = 0; i < nGroups; i++) flashUntil[groups[i].id] = until;
+  } else if (g >= 1 && g <= (int)MAX_GROUPS && groupIndexById((uint8_t)g) >= 0) {
+    flashUntil[g] = until;
+  } else {
+    server.send(400, "text/plain", "parametri non validi");
+    return;
+  }
+  server.send(200, "text/plain", "ok");
+}
+
 void handleGroupAdd() {
   if (nGroups >= MAX_GROUPS) {
     server.send(400, "text/plain", "troppi gruppi (max 8)");
@@ -461,6 +515,7 @@ void handleGroupAdd() {
   groups[nGroups].id = id;
   groups[nGroups].name = cleanName(server.arg("name"));
   nGroups++;
+  flashUntil[id] = 0;
   for (size_t c = 0; c < N_CHANNELS; c++) groupVal[id][c] = 0;
   saveConfig();
   server.send(200, "text/plain", "ok");
@@ -491,6 +546,7 @@ void handleGroupDelete() {
   }
   for (size_t i = idx; i + 1 < nGroups; i++) groups[i] = groups[i + 1];
   nGroups--;
+  flashUntil[g] = 0;
   uint8_t fallback = groups[0].id;
   for (size_t i = 0; i < N_FIXTURES; i++)
     if (fixGroup[i] == (uint8_t)g) fixGroup[i] = fallback;
@@ -625,6 +681,7 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.on("/all", handleAll);
+  server.on("/flash", handleFlash);
   server.on("/gadd", handleGroupAdd);
   server.on("/gren", handleGroupRename);
   server.on("/gdel", handleGroupDelete);
